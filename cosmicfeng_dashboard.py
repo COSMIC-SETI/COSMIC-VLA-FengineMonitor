@@ -17,24 +17,25 @@ antnames = ["ea08", "ea09", "ea02"]
 NUM_ANTS = len(ant_feng_dict)
 NUM_CHANNELS = 1024
 NUM_TUNINGS = 4
-YMin = -80
-YMax = -40
+YMin = -100
+YMax = -20
 
 def ant_dataFrame(**kwargs):
     dct = {}
     for ant,feng in ant_feng_dict.items():
-        autocorr = np.array(feng.autocorr.get_new_spectra(),dtype=np.float64)
-        autocorr = 10*np.log10(autocorr)
-        np.nan_to_num(autocorr, copy=False, nan=0.0, posinf=2.0, neginf = 0.0)
-        n_ifs, n_chans = autocorr.shape
-        t_dict = {}
-        for i in range(n_ifs):
-            t_dict[i] = {
-                    c : autocorr[i,c] for c in range(n_chans)
-                }
-        t_df = pd.DataFrame(t_dict).transpose()
-        t_df.index.name='ifs'
-        dct[ant] = t_df
+        if ant_name in antnames:
+            autocorr = np.array(feng.autocorr.get_new_spectra(),dtype=np.float64)
+            autocorr = 10*np.log10(autocorr)
+            np.nan_to_num(autocorr, copy=False, nan=0.0, posinf=2.0, neginf = 0.0)
+            n_ifs, n_chans = autocorr.shape
+            t_dict = {}
+            for i in range(n_ifs):
+                t_dict[i] = {
+                        c : autocorr[i,c] for c in range(n_chans)
+                    }
+            t_df = pd.DataFrame(t_dict).transpose()
+            t_df.index.name='ifs'
+            dct[ant] = t_df
     df = pd.concat(dct).transpose()
     return df
 

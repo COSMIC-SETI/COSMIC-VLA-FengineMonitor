@@ -12,7 +12,7 @@ pn.extension()
 ant_feng_dict = ant_remotefeng_map.get_antennaFengineDict(redis_obj)
 
 #Please select antennas you want listed here:
-antnames = ["ea08", "ea09", "ea02"]
+antnames = ["ea08", "ea03"]
 
 NUM_ANTS = len(ant_feng_dict)
 NUM_CHANNELS = 1024
@@ -23,7 +23,7 @@ YMax = -20
 def ant_dataFrame(**kwargs):
     dct = {}
     for ant,feng in ant_feng_dict.items():
-        if ant_name in antnames:
+        if ant in antnames:
             autocorr = np.array(feng.autocorr.get_new_spectra(),dtype=np.float64)
             autocorr = 10*np.log10(autocorr)
             np.nan_to_num(autocorr, copy=False, nan=0.0, posinf=2.0, neginf = 0.0)
@@ -39,7 +39,7 @@ def ant_dataFrame(**kwargs):
     df = pd.concat(dct).transpose()
     return df
 
-df = PeriodicDataFrame(ant_dataFrame, interval='10s')
+df = PeriodicDataFrame(ant_dataFrame, interval='5s')
 
 pn_realtime = pn.Column("# Autocorrelation Dashboard")
 for ant_name in ant_feng_dict:

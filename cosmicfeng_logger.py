@@ -62,23 +62,25 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
             means, powers, rmss = feng.input.get_bit_stats()
             #Compile status dict
             ant_feng_status_dict[ant] = {
-                "ant_pad" : ant_prop["pad"],
-                "dts_state_ok" : parity_status['ok'],
-                "dts_state_gty_lock_ok" : parity_status['state_ok']['gty_lock_ok'],
-                "dts_state_lock_ok" : parity_status['state_ok']['lock_ok'],
-                "dts_state_sync_ok" : parity_status['state_ok']['sync_ok'],
+                "ant_pad" : ant_prop[ant]["pad"],
+                "dts_state_ok" : int(parity_status['ok']),
+                "dts_state_gty_lock_ok" : int(parity_status['state_ok']['gty_lock_ok']),
+                "dts_state_lock_ok" : int(parity_status['state_ok']['lock_ok']),
+                "dts_state_sync_ok" : int(parity_status['state_ok']['sync_ok']),
             }
-            for dts_stream in range(len(parity_errs)):
-                ant_feng_status_dict[ant][f'dts_stream_acc_{dts_stream}'] = parity_errs[dts_stream]['acc']
-                ant_feng_status_dict[ant][f'dts_stream_count_{dts_stream}'] = parity_errs[dts_stream]['count']
+            ant_feng_status_dict[ant][f'dts_parity_errs'] = parity_errs
+            ant_feng_status_dict[ant][f'inpt_means'] = means.tolist()
+            ant_feng_status_dict[ant][f'inpt_powers'] = powers.tolist()
+            ant_feng_status_dict[ant][f'inpt_rmss'] = rmss.tolist()
+            eq_coeffs_identical = True
+            eq_coeffs_mean = []
             for stream in range(len(means)):
-                ant_feng_status_dict[ant][f'inpt_means_{stream}'] = means[stream]
-                ant_feng_status_dict[ant][f'inpt_powers_{stream}'] = powers[stream]
-                ant_feng_status_dict[ant][f'inpt_rmss_{stream}'] = rmss[stream]
                 stream_eq_coeffs,bp = feng.eq.get_coeffs(stream)
                 stream_eq_coeffs=np.array(stream_eq_coeffs)/bp
-                ant_feng_status_dict[ant][f'eq_identical_coeffs'] = int(np.all(stream_eq_coeffs))
-                ant_feng_status_dict[ant][f'eq_mean_coeffs'] = np.mean(stream_eq_coeffs)
+                eq_coeffs_identical &= np.all(stream_eq_coeffs)
+                eq_coeffs_mean += [np.mean(stream_eq_coeffs)]
+            ant_feng_status_dict[ant][f'eq_identical_coeffs'] = int(eq_coeffs_identical)
+            ant_feng_status_dict[ant][f'eq_mean_coeffs'] = eq_coeffs_mean
         except:
             ant_feng_status_dict[ant] = f"Unable to reach {ant}. F-Engine may be unreachable."
             bad_ant_list += [ant]
@@ -113,9 +115,37 @@ class FEngineLogger:
         write_api = self.client.write_api(write_options=SYNCHRONOUS)
         time_now = time.time_ns()
         for ant, state in feng_status_dict.items():
-            for key,value in state.items():
-                pt = Point("feng_stat").tag("ant",ant).field("delay_ns",delay_model[ant]["delay_ns"]).time(timestamp)
-        return
+            if isinstance(state,dict):
+                pt = Point("feng_stat").tag("ant",ant).field("ant_pad",state["ant_pad"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("dts_state_ok",state["dts_state_ok"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("dts_state_gty_lock_ok",state["dts_state_gty_lock_ok"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("dts_state_lock_ok",state["dts_state_lock_ok"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("dts_state_sync_ok",state["dts_state_sync_ok"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("eq_identical_coeffs",state["eq_identical_coeffs"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+
+                for err_ind in range(len(state['dts_parity_errs'])):
+                    parity_err = state['dts_parity_errs'][err_ind]
+                    pt = Point("feng_stat").tag("ant",ant).tag("dts_lane",err_ind).field("acc",parity_err["acc"]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+                    pt = Point("feng_stat").tag("ant",ant).tag("dts_lane",err_ind).field("count",parity_err["count"]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+                
+                for stream in range(len(state["inpt_means"])):
+                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_mean",state['inpt_means'][stream]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_power",state['inpt_powers'][stream]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_rms",state['inpt_rmss'][stream]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("eq_mean_coeff",state['eq_mean_coeffs'][stream]).time(time_now)
+                    write_api.write(self.bucket,self.org, pt)
+
     def run(self):
         """
         Every polling period, fetch from fetch_feng_status_dict() an antenna:fengdict mapping 
@@ -132,6 +162,7 @@ class FEngineLogger:
                 redis_publish_service_pulse(self.redis_obj, SERVICE_NAME)
                 t = time.time()
                 ant_feng_status_dict, bad_ant_list = fetch_feng_status_dict(self.redis_obj, self.ant_feng_map)
+                print(ant_feng_status_dict)
                 redis_publish_dict_to_hash(self.redis_obj, "FENG_state", ant_feng_status_dict)
                 self.send_fengdata_to_influx_db(ant_feng_status_dict)
                 duration = time.time() - t

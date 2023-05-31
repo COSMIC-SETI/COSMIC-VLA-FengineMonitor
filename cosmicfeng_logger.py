@@ -2,6 +2,7 @@ from cosmic.redis_actions import redis_obj, redis_publish_service_pulse, redis_h
 from cosmic.fengines import ant_remotefeng_map
 import time
 import numpy as np
+import math
 import logging
 from logging.handlers import RotatingFileHandler
 from influxdb_client import InfluxDBClient, Point
@@ -49,11 +50,9 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
     """
     ant_feng_status_dict = {}
     ant_prop = redis_hget_keyvalues(redis_obj, "META_antennaProperties")
-    ant_location = {}
+    antdispmap = {}
     bad_ant_list=[]
     for ant, feng in ant_feng_map.items():
-        #Fetch antenna properties:
-        ant_location[ant] = f"{ant_prop[ant]['server']}:{ant_prop[ant]['pcie_id']}_{ant_prop[ant]['pipeline_id']}"
         try:
             #DTS status:
             parity_status = feng.dts.get_status_dict()
@@ -62,12 +61,19 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
             means, powers, rmss = feng.input.get_bit_stats()
             #Compile status dict
             ant_feng_status_dict[ant] = {
+                "ant_path" : f"{ant_prop[ant]['server']}:{ant_prop[ant]['pcie_id']}_{ant_prop[ant]['pipeline_id']}",
                 "ant_pad" : ant_prop[ant]["pad"],
                 "dts_state_ok" : int(parity_status['ok']),
                 "dts_state_gty_lock_ok" : int(parity_status['state_ok']['gty_lock_ok']),
                 "dts_state_lock_ok" : int(parity_status['state_ok']['lock_ok']),
                 "dts_state_sync_ok" : int(parity_status['state_ok']['sync_ok']),
             }
+            try:
+                ant_feng_status_dict[ant]["ant_displacement"] = math.sqrt(
+                        ant_prop[ant]["X"] ** 2 + ant_prop[ant]["Y"] ** 2 + ant_prop[ant]["Z"] ** 2
+                    )
+            except:
+                antdispmap[ant]["ant_displacement"] = -1.0
             ant_feng_status_dict[ant][f'dts_parity_errs'] = parity_errs
             ant_feng_status_dict[ant][f'inpt_means'] = means.tolist()
             ant_feng_status_dict[ant][f'inpt_powers'] = powers.tolist()
@@ -85,7 +91,6 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
             ant_feng_status_dict[ant] = f"Unable to reach {ant}. F-Engine may be unreachable."
             bad_ant_list += [ant]
             continue
-    redis_publish_dict_to_hash(redis_obj, "META_antFengMap", ant_location)
     return ant_feng_status_dict, bad_ant_list
 
 class FEngineLogger:
@@ -127,6 +132,10 @@ class FEngineLogger:
                 pt = Point("feng_stat").tag("ant",ant).field("dts_state_sync_ok",state["dts_state_sync_ok"]).time(time_now)
                 write_api.write(self.bucket,self.org, pt)
                 pt = Point("feng_stat").tag("ant",ant).field("eq_identical_coeffs",state["eq_identical_coeffs"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("ant_stat").tag("ant",ant).field("displacement",state["ant_displacement"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("ant_stat").tag("ant",ant).field("path",state["ant_path"]).time(time_now)
                 write_api.write(self.bucket,self.org, pt)
 
                 for err_ind in range(len(state['dts_parity_errs'])):

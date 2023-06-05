@@ -34,6 +34,8 @@ fh.setFormatter(formatter)
 logger.addHandler(ch)
 logger.addHandler(fh)
 
+FPGA_CLOCK_RATE_HZ = 256e6
+
 def fetch_feng_status_dict(redis_obj, ant_feng_map):
     """
     Function collects from Redis hashes and over remoteobjects from the F-Engines a 
@@ -54,6 +56,24 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
     bad_ant_list=[]
     for ant, feng in ant_feng_map.items():
         try:
+        #F-Engine times:
+            delay_time_ms = (feng.delay.timer.get_fpga_time()*1000)/FPGA_CLOCK_RATE_HZ
+            phaserotate_time_ms = (feng.phaserotate.timer.get_fpga_time()*1000)/FPGA_CLOCK_RATE_HZ
+            lo_time_ms = (feng.lo.timer.get_fpga_time()*1000)/FPGA_CLOCK_RATE_HZ
+            time_now = time.time()
+            #check delay_time_ms, phaserotate_time_ms and lo_time_ms are within 0.1s of each other
+            if abs(delay_time_ms - phaserotate_time_ms) > 100 or abs(delay_time_ms - lo_time_ms) > 100 or abs(phaserotate_time_ms - lo_time_ms) > 100:
+                all_feng_time_match = False
+            else:
+                all_feng_time_match = True
+            
+            all_time_good = False
+            #if all_feng_time_match, check delay_time_ms is within 0.1s of current time
+            if all_feng_time_match:     
+                if abs(delay_time_ms/1000 - time_now) <= 1:
+                    all_time_good = True
+
+            # try:
             #DTS status:
             parity_status = feng.dts.get_status_dict()
             parity_errs = parity_status['parity_errors']
@@ -67,6 +87,10 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
                 "dts_state_gty_lock_ok" : int(parity_status['state_ok']['gty_lock_ok']),
                 "dts_state_lock_ok" : int(parity_status['state_ok']['lock_ok']),
                 "dts_state_sync_ok" : int(parity_status['state_ok']['sync_ok']),
+                "feng_delay_time" : int(delay_time_ms),
+                "feng_phaserotate_time" : int(phaserotate_time_ms),
+                "feng_lo_time" : int(lo_time_ms),
+                "feng_time_correct" : int(all_time_good)
             }
             try:
                 ant_feng_status_dict[ant]["ant_displacement"] = math.sqrt(
@@ -136,6 +160,14 @@ class FEngineLogger:
                 pt = Point("ant_stat").tag("ant",ant).field("displacement",state["ant_displacement"]).time(time_now)
                 write_api.write(self.bucket,self.org, pt)
                 pt = Point("ant_stat").tag("ant",ant).field("path",state["ant_path"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("feng_delay_time",state["feng_delay_time"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("feng_phaserotate_time",state["feng_phaserotate_time"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("feng_lo_time",state["feng_lo_time"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("feng_time_correct",state["feng_time_correct"]).time(time_now)
                 write_api.write(self.bucket,self.org, pt)
 
                 for err_ind in range(len(state['dts_parity_errs'])):

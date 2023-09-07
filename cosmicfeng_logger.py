@@ -90,7 +90,8 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
                 "feng_delay_time" : int(delay_time_ms),
                 "feng_phaserotate_time" : int(phaserotate_time_ms),
                 "feng_lo_time" : int(lo_time_ms),
-                "feng_time_correct" : int(all_time_good)
+                "feng_time_correct" : int(all_time_good),
+                "feng_pfb_overflow_count" : int(feng.pfb.get_overflow_count())
             }
             try:
                 ant_feng_status_dict[ant]["ant_displacement"] = math.sqrt(
@@ -169,6 +170,9 @@ class FEngineLogger:
                 write_api.write(self.bucket,self.org, pt)
                 pt = Point("feng_stat").tag("ant",ant).field("feng_time_correct",state["feng_time_correct"]).time(time_now)
                 write_api.write(self.bucket,self.org, pt)
+                pt = Point("feng_stat").tag("ant",ant).field("feng_pfb_overflow_count",state["feng_pfb_overflow_count"]).time(time_now)
+                write_api.write(self.bucket,self.org, pt)
+
 
                 for err_ind in range(len(state['dts_parity_errs'])):
                     parity_err = state['dts_parity_errs'][err_ind]

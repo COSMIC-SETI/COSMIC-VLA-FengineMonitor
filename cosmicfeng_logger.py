@@ -5,8 +5,7 @@ import numpy as np
 import math
 import logging
 from logging.handlers import RotatingFileHandler
-from influxdb_client import InfluxDBClient, Point
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client_3 import InfluxDBClient3, Point
 import os
 import argparse
 
@@ -130,66 +129,69 @@ class FEngineLogger:
         self.ant_feng_map = ant_remotefeng_map.get_antennaFengineDict(
             self.redis_obj
         )
-        self.bucket = "fengine"
+        self.database = "fengine_influxdb"
         token = influxdb_token
-        self.client = InfluxDBClient(url='http://localhost:8086', token=token)
-        self.org="seti"
+        
+        # Initialize the v3 client
+        self.client = InfluxDBClient3(host='http://localhost:8181', token=token, org="seti", database=self.database)
+        
         logger.info("Starting FEngine logger...\n")
 
     def send_fengdata_to_influx_db(self,feng_status_dict):
         """
         Given a feng status dictionary, collect from Redis hashes the antenna to F-Engine mapping and
-        the antenna location displacement
-        for loading to the InfluxDB database under bucket 'fengine'
+        the antenna location displacement for loading to the InfluxDB database under database 'fengine_influxdb'.
+        Writes are batched and fields sharing the same tags are grouped to avoid sparse tables.
         """
-        write_api = self.client.write_api(write_options=SYNCHRONOUS)
         time_now = time.time_ns()
+        points_to_write = []
+
         for ant, state in feng_status_dict.items():
             if isinstance(state,dict):
-                pt = Point("feng_stat").tag("ant",ant).field("ant_pad",state["ant_pad"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("dts_state_ok",state["dts_state_ok"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("dts_state_gty_lock_ok",state["dts_state_gty_lock_ok"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("dts_state_lock_ok",state["dts_state_lock_ok"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("dts_state_sync_ok",state["dts_state_sync_ok"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("eq_identical_coeffs",state["eq_identical_coeffs"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("ant_stat").tag("ant",ant).field("displacement",state["ant_displacement"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("ant_stat").tag("ant",ant).field("path",state["ant_path"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("feng_delay_time",state["feng_delay_time"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("feng_phaserotate_time",state["feng_phaserotate_time"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("feng_lo_time",state["feng_lo_time"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("feng_time_correct",state["feng_time_correct"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
-                pt = Point("feng_stat").tag("ant",ant).field("feng_pfb_overflow_count",state["feng_pfb_overflow_count"]).time(time_now)
-                write_api.write(self.bucket,self.org, pt)
+                # Group all basic F-Engine properties (Tags: ant)
+                pt_feng = Point("feng_stat").tag("ant", ant) \
+                    .field("ant_pad", state["ant_pad"]) \
+                    .field("dts_state_ok", state["dts_state_ok"]) \
+                    .field("dts_state_gty_lock_ok", state["dts_state_gty_lock_ok"]) \
+                    .field("dts_state_lock_ok", state["dts_state_lock_ok"]) \
+                    .field("dts_state_sync_ok", state["dts_state_sync_ok"]) \
+                    .field("eq_identical_coeffs", state["eq_identical_coeffs"]) \
+                    .field("feng_delay_time", state["feng_delay_time"]) \
+                    .field("feng_phaserotate_time", state["feng_phaserotate_time"]) \
+                    .field("feng_lo_time", state["feng_lo_time"]) \
+                    .field("feng_time_correct", state["feng_time_correct"]) \
+                    .field("feng_pfb_overflow_count", state["feng_pfb_overflow_count"]) \
+                    .time(time_now)
+                points_to_write.append(pt_feng)
 
+                # Group all general Antenna properties (Tags: ant)
+                pt_ant = Point("ant_stat").tag("ant", ant) \
+                    .field("displacement", float(state["ant_displacement"])) \
+                    .field("path", state["ant_path"]) \
+                    .time(time_now)
+                points_to_write.append(pt_ant)
 
+                # Group parity errors per DTS Lane (Tags: ant, dts_lane)
                 for err_ind in range(len(state['dts_parity_errs'])):
                     parity_err = state['dts_parity_errs'][err_ind]
-                    pt = Point("feng_stat").tag("ant",ant).tag("dts_lane",err_ind).field("acc",parity_err["acc"]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
-                    pt = Point("feng_stat").tag("ant",ant).tag("dts_lane",err_ind).field("count",parity_err["count"]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
+                    pt_lane = Point("feng_stat").tag("ant", ant).tag("dts_lane", str(err_ind)) \
+                        .field("acc", parity_err["acc"]) \
+                        .field("count", parity_err["count"]) \
+                        .time(time_now)
+                    points_to_write.append(pt_lane)
                 
+                # Group stream metrics per Stream (Tags: ant, stream)
                 for stream in range(len(state["inpt_means"])):
-                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_mean",state['inpt_means'][stream]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
-                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_power",state['inpt_powers'][stream]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
-                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("inpt_rms",state['inpt_rmss'][stream]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
-                    pt = Point("feng_stat").tag("ant",ant).tag("stream",stream).field("eq_mean_coeff",state['eq_mean_coeffs'][stream]).time(time_now)
-                    write_api.write(self.bucket,self.org, pt)
+                    pt_stream = Point("feng_stat").tag("ant", ant).tag("stream", str(stream)) \
+                        .field("inpt_mean", float(state['inpt_means'][stream])) \
+                        .field("inpt_power", float(state['inpt_powers'][stream])) \
+                        .field("inpt_rms", float(state['inpt_rmss'][stream])) \
+                        .field("eq_mean_coeff", float(state['eq_mean_coeffs'][stream])) \
+                        .time(time_now)
+                    points_to_write.append(pt_stream)
+
+        if points_to_write:
+            self.client.write(record=points_to_write)
 
     def run(self):
         """

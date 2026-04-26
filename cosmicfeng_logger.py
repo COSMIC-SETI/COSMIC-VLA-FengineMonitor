@@ -111,7 +111,8 @@ def fetch_feng_status_dict(redis_obj, ant_feng_map):
                 eq_coeffs_mean += [np.mean(stream_eq_coeffs)]
             ant_feng_status_dict[ant][f'eq_identical_coeffs'] = int(eq_coeffs_identical)
             ant_feng_status_dict[ant][f'eq_mean_coeffs'] = eq_coeffs_mean
-        except:
+        except Exception as e:
+            logger.error(f"Error fetching data for {ant}: {e}")
             ant_feng_status_dict[ant] = f"Unable to reach {ant}. F-Engine may be unreachable."
             bad_ant_list += [ant]
             continue
